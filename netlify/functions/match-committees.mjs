@@ -2,23 +2,10 @@
 import OpenAI from "openai";
 
 /**
- * POST body shape:
+ * POST body:
  * {
- *   member: {
- *     name, email,
- *     experiences, values, goals, reasons,
- *     interests: string[] | string
- *   },
- *   committees: [
- *     {
- *       name, purpose,
- *       shortTermGoals: string[],
- *       longTermGoals: string[],
- *       work: string[],
- *       requirements: string[],
- *       skills: string[]
- *     }, ...
- *   ]
+ *   member: { name, email, experiences, values, goals, reasons, interests: string[]|string },
+ *   committees: [{ name, purpose, shortTermGoals: string[], longTermGoals: string[], work: string[], requirements: string[], skills: string[] }]
  * }
  */
 
@@ -46,25 +33,20 @@ export default async (req, context) => {
   } catch {
     return jsonResp({ error: "Invalid JSON" }, 400);
   }
-
   const { member, committees } = payload || {};
   if (!member || !Array.isArray(committees)) {
     return jsonResp({ error: "Missing member or committees" }, 400);
   }
 
-  // Normalize interests if it's a string
   if (typeof member.interests === "string") {
-    member.interests = member.interests
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    member.interests = member.interests.split(",").map(s => s.trim()).filter(Boolean);
   }
 
   // --- OpenAI client ---
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   if (!process.env.OPENAI_API_KEY) {
     return jsonResp({ error: "Server misconfigured: missing OPENAI_API_KEY" }, 500);
   }
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   // --- System guidance ---
   const system = `
@@ -76,7 +58,7 @@ Call-to-action should invite contacting the chair or visiting the committee page
 If information is missing, infer conservatively and stay helpful.
 `;
 
-  // --- Structured output schema ---
+  // --- Structured output schema (NOTE the additionalProperties on the item object) ---
   const jsonSchema = {
     type: "object",
     properties: {
@@ -92,7 +74,8 @@ If information is missing, infer conservatively and stay helpful.
             call_to_action: { type: "string" },
             chair_contact_hint: { type: "string" }
           },
-          required: ["committee_name", "score", "rationale", "call_to_action"]
+          required: ["committee_name", "score", "rationale", "call_to_action"],
+          additionalProperties: false
         }
       },
       summary_for_member: { type: "string" }
@@ -105,13 +88,11 @@ If information is missing, infer conservatively and stay helpful.
 
   try {
     const response = await client.responses.create({
-      // If you hit a model support error for structured outputs, try the snapshot below:
-      // model: "gpt-4o-mini-2024-07-18",
+      // If you hit a model support error for structured outputs, try: "gpt-4o-mini-2024-07-18"
       model: "gpt-4.1-mini",
       instructions: system,
       input: JSON.stringify(modelInput),
       temperature: 0.2,
-      // NEW: Structured Outputs via text.format
       text: {
         format: {
           type: "json_schema",
@@ -122,10 +103,8 @@ If information is missing, infer conservatively and stay helpful.
       }
     });
 
-    // Convenience: JSON string when using text.format JSON schema
-    const outText = response.output_text;
-
-    // (Paranoia) ensure valid JSON
+    const outText = response.output_text; // JSON string in this mode
+    // sanity check
     let body = outText;
     try { body = JSON.stringify(JSON.parse(outText)); } catch {}
 
@@ -146,7 +125,6 @@ If information is missing, infer conservatively and stay helpful.
   }
 };
 
-// Helper to return JSON with CORS
 function jsonResp(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
