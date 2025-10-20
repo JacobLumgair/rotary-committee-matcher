@@ -58,7 +58,7 @@ Call-to-action should invite contacting the chair or visiting the committee page
 If information is missing, infer conservatively and stay helpful.
 `;
 
-  // --- Structured output schema (NOTE the additionalProperties on the item object) ---
+  // --- Structured output schema (strict mode requires required[]=all properties) ---
   const jsonSchema = {
     type: "object",
     properties: {
@@ -74,7 +74,13 @@ If information is missing, infer conservatively and stay helpful.
             call_to_action: { type: "string" },
             chair_contact_hint: { type: "string" }
           },
-          required: ["committee_name", "score", "rationale", "call_to_action"],
+          required: [
+            "committee_name",
+            "score",
+            "rationale",
+            "call_to_action",
+            "chair_contact_hint"   // <-- added
+          ],
           additionalProperties: false
         }
       },
@@ -104,7 +110,6 @@ If information is missing, infer conservatively and stay helpful.
     });
 
     const outText = response.output_text; // JSON string in this mode
-    // sanity check
     let body = outText;
     try { body = JSON.stringify(JSON.parse(outText)); } catch {}
 
