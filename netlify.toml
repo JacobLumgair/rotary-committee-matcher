@@ -1,0 +1,6 @@
+[functions]
+  directory = "netlify/functions"
+
+# (optional) ensure Node 18/20
+[build.environment]
+  NODE_VERSION = "20"
