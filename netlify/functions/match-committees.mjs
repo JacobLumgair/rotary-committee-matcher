@@ -94,12 +94,16 @@ Call-to-action should invite contacting the chair or visiting the committee page
 
   try {
     const response = await client.responses.create({
-      // Solid, fast, and budget-friendly general model:
-      model: "gpt-4.1-mini",
+      model: "gpt-4.1-mini", // if you hit a model support error, try "gpt-4o-mini-2024-07-18"
       instructions: system,
       input: JSON.stringify(modelInput),
       temperature: 0.2,
-      response_format: { type: "json_schema", json_schema: schema }
+      text: {
+        format: {
+          type: "json_schema",
+          json_schema: schema, // { name, strict, schema: { ... } }
+        },
+      },
     });
 
     // Convenience helper returns the JSON string when response_format is JSON:
