@@ -2,19 +2,33 @@
 import OpenAI from "openai";
 
 /**
- * Expected POST body:
+ * POST body shape:
  * {
- *   member: { name, email, experiences, values, goals, reasons, interests },
- *   committees: [ { name, purpose, shortTermGoals, longTermGoals, work, requirements, skills } ]
+ *   member: {
+ *     name, email,
+ *     experiences, values, goals, reasons,
+ *     interests: string[] | string
+ *   },
+ *   committees: [
+ *     {
+ *       name, purpose,
+ *       shortTermGoals: string[],
+ *       longTermGoals: string[],
+ *       work: string[],
+ *       requirements: string[],
+ *       skills: string[]
+ *     }, ...
+ *   ]
  * }
  */
 
 export default async (req, context) => {
+  // --- CORS / Preflight ---
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
       headers: {
-        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Origin": "*", // lock down later
         "Access-Control-Allow-Headers": "Content-Type",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
       },
@@ -22,93 +36,100 @@ export default async (req, context) => {
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResp({ error: "Method not allowed" }, 405);
   }
 
+  // --- Parse / validate input ---
   let payload;
   try {
     payload = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResp({ error: "Invalid JSON" }, 400);
   }
 
   const { member, committees } = payload || {};
   if (!member || !Array.isArray(committees)) {
-    return new Response(JSON.stringify({ error: "Missing member or committees" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResp({ error: "Missing member or committees" }, 400);
   }
 
+  // Normalize interests if it's a string
+  if (typeof member.interests === "string") {
+    member.interests = member.interests
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  // --- OpenAI client ---
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!process.env.OPENAI_API_KEY) {
+    return jsonResp({ error: "Server misconfigured: missing OPENAI_API_KEY" }, 500);
+  }
 
-  const schema = {
-    name: "CommitteeMatch",
-    schema: {
-      type: "object",
-      properties: {
-        top_matches: {
-          type: "array",
-          maxItems: 3,
-          items: {
-            type: "object",
-            properties: {
-              committee_name: { type: "string" },
-              score: { type: "number" }, // 0–100
-              rationale: { type: "string" },
-              call_to_action: { type: "string" },
-              chair_contact_hint: { type: "string" }
-            },
-            required: ["committee_name", "score", "rationale", "call_to_action"]
-          }
-        },
-        summary_for_member: { type: "string" }
-      },
-      required: ["top_matches", "summary_for_member"],
-      additionalProperties: false
-    },
-    strict: true,
-    // NOTE: Responses API json schema wrapper:
-    // { type: "json_schema", json_schema: <this-object> }
-  };
-
+  // --- System guidance ---
   const system = `
-You are a Rotary onboarding assistant. 
-Given a member profile and committee catalog, pick the best 3 matches.
-Be specific and encouraging, but concise. Base reasons strictly on the inputs.
+You are a Rotary onboarding assistant.
+Given a member profile and a committee catalog, pick the best 3 matches.
+Be specific and encouraging, but concise. Use only the provided inputs.
 Scoring: 0–100 (fit + availability + interests + skills).
 Call-to-action should invite contacting the chair or visiting the committee page.
+If information is missing, infer conservatively and stay helpful.
 `;
 
-  // Compose a compact input object for the model:
-  const modelInput = {
-    member,
-    committees
+  // --- Structured output schema ---
+  const jsonSchema = {
+    type: "object",
+    properties: {
+      top_matches: {
+        type: "array",
+        maxItems: 3,
+        items: {
+          type: "object",
+          properties: {
+            committee_name: { type: "string" },
+            score: { type: "number" }, // 0–100
+            rationale: { type: "string" },
+            call_to_action: { type: "string" },
+            chair_contact_hint: { type: "string" }
+          },
+          required: ["committee_name", "score", "rationale", "call_to_action"]
+        }
+      },
+      summary_for_member: { type: "string" }
+    },
+    required: ["top_matches", "summary_for_member"],
+    additionalProperties: false
   };
+
+  const modelInput = { member, committees };
 
   try {
     const response = await client.responses.create({
-      model: "gpt-4.1-mini", // if you hit a model support error, try "gpt-4o-mini-2024-07-18"
+      // If you hit a model support error for structured outputs, try the snapshot below:
+      // model: "gpt-4o-mini-2024-07-18",
+      model: "gpt-4.1-mini",
       instructions: system,
       input: JSON.stringify(modelInput),
       temperature: 0.2,
+      // NEW: Structured Outputs via text.format
       text: {
         format: {
           type: "json_schema",
-          json_schema: schema, // { name, strict, schema: { ... } }
-        },
-      },
+          name: "CommitteeMatch",
+          schema: jsonSchema,
+          strict: true
+        }
+      }
     });
 
-    // Convenience helper returns the JSON string when response_format is JSON:
+    // Convenience: JSON string when using text.format JSON schema
     const outText = response.output_text;
-    return new Response(outText, {
+
+    // (Paranoia) ensure valid JSON
+    let body = outText;
+    try { body = JSON.stringify(JSON.parse(outText)); } catch {}
+
+    return new Response(body, {
       status: 200,
       headers: {
         "Content-Type": "application/json",
@@ -117,9 +138,21 @@ Call-to-action should invite contacting the chair or visiting the committee page
     });
   } catch (err) {
     console.error("OpenAI error", err);
-    return new Response(JSON.stringify({ error: "AI match failed" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    const msg =
+      (err && err.error && err.error.message) ||
+      (err && err.message) ||
+      "AI match failed";
+    return jsonResp({ error: "AI match failed", detail: msg }, 500);
   }
 };
+
+// Helper to return JSON with CORS
+function jsonResp(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
+}
