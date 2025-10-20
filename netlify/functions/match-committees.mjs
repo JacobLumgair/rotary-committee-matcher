@@ -56,6 +56,7 @@ Be specific and encouraging, but concise. Use only the provided inputs.
 Scoring: 0–100 (fit + availability + interests + skills).
 Call-to-action should invite contacting the chair or visiting the committee page.
 If information is missing, infer conservatively and stay helpful.
+Do not address the member in third person, address them as if you are talking directly to them.
 `;
 
   // --- Structured output schema (strict mode requires required[]=all properties) ---
