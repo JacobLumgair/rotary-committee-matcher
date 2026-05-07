@@ -179,7 +179,7 @@ Writing style:
 
   try {
     const response = await client.responses.create({
-      model: "gpt-4.1-mini",
+      model: "gpt-5.4-nano",
       instructions: system,
       input: JSON.stringify(modelInput),
       temperature: 0.2,
